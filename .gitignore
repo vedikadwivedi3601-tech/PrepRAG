@@ -1,0 +1,36 @@
+#Python
+__pycache__/
+*.py[cod]
+
+#Virtual environment
+venv/
+.venv/
+env/
+
+#Chroma database
+chroma_db/
+
+#Model/cache files
+*.bin
+*.safetensors
+*.pt
+*.pth
+
+#Hugiing Face cache
+.cache/
+huggingface/
+
+#Environment variable
+.env
+# Streamlit
+.streamlit/secrets.toml
+
+#IDE
+.vscode/
+
+#OS
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
