@@ -172,7 +172,7 @@ if query:
 
     results = collection.query(
         query_embeddings=query_embedding.tolist(),
-        n_results=5,
+        n_results=3,
         include=[
             "documents",
             "metadatas",
