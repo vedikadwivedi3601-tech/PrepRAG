@@ -34,7 +34,7 @@ def load_qwen():
 
     print("Loading Qwen model...")
 
-    llm_name = "Qwen/Qwen2.5-1.5B-Instruct"
+    llm_name = "Qwen/Qwen2.5-0.5B-Instruct"
 
     tokenizer = AutoTokenizer.from_pretrained(llm_name)
 
