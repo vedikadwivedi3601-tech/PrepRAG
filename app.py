@@ -4,7 +4,9 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
 import streamlit as st
 import time
-
+import os
+import glob
+from pypdf import PdfReader
 
 # ============================================================
 # 1. LOAD EMBEDDING MODEL ONLY ONCE
