@@ -1,6 +1,7 @@
 streamlit
 chromadb
 sentence-transformers
-transformerstorch
+transformers
+torch
 accelerate
 pypdf
