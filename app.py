@@ -7,17 +7,24 @@ import time
 
 
 # ============================================================
+# SETTINGS (tune these)
+# ============================================================
+
+TOP_K = 3                  # fewer chunks = shorter prompt = faster generation
+MAX_DISTANCE = 1.1         # if the best match is farther than this, treat as out of scope
+SNIPPET_CHARS = 300        # how much of each retrieved chunk to show in Sources
+MAX_NEW_TOKENS = 150
+
+st.set_page_config(page_title="RAG AI Interviewer", page_icon="🤖")
+
+
+# ============================================================
 # 1. LOAD EMBEDDING MODEL ONLY ONCE
 # ============================================================
 
 @st.cache_resource
 def load_embedding_model():
-
-    print("Loading embedding model...")
-
-    model = SentenceTransformer("all-MiniLM-L6-v2")
-
-    return model
+    return SentenceTransformer("all-MiniLM-L6-v2")
 
 
 embedding_model = load_embedding_model()
@@ -29,24 +36,16 @@ embedding_model = load_embedding_model()
 
 @st.cache_resource
 def load_qwen():
-
-    print("Loading Qwen model...")
-
     llm_name = "Qwen/Qwen2.5-1.5B-Instruct"
 
     tokenizer = AutoTokenizer.from_pretrained(llm_name)
-
     model = AutoModelForCausalLM.from_pretrained(
         llm_name,
         torch_dtype="auto"
     )
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-
     model = model.to(device)
-
-    print("Qwen loaded successfully")
-    print("Using device:", device)
 
     return tokenizer, model
 
@@ -60,18 +59,8 @@ tokenizer, llm = load_qwen()
 
 @st.cache_resource
 def load_chromadb():
-
-    print("Connecting to ChromaDB...")
-
-    client = chromadb.PersistentClient(
-        path="chroma_db"
-    )
-
-    collection = client.get_collection(
-        name="ml_knowledge"
-    )
-
-    return collection
+    client = chromadb.PersistentClient(path="chroma_db")
+    return client.get_collection(name="ml_knowledge")
 
 
 collection = load_chromadb()
@@ -82,10 +71,12 @@ collection = load_chromadb()
 # ============================================================
 
 st.title("🤖 RAG AI Interviewer")
-
-query = st.text_input(
-    "Ask your AI/ML question:"
+st.caption(
+    "Ask machine learning and deep learning interview questions. "
+    "Answers are generated from source pdfs."
 )
+
+query = st.text_input("Ask your AI/ML question:")
 
 
 # ============================================================
@@ -95,88 +86,47 @@ query = st.text_input(
 if query:
 
     # --------------------------------------------------------
-    # EMBEDDING
+    # EMBEDDING + SEARCH (no output yet, just store timings)
     # --------------------------------------------------------
 
     start = time.time()
-
-    query_embedding = embedding_model.encode(
-        [query]
-    )
-
+    query_embedding = embedding_model.encode([query])
     embedding_time = time.time() - start
 
-    st.write(
-        f"Embedding time: {embedding_time:.2f} seconds"
-    )
-
-
-    # --------------------------------------------------------
-    # CHROMADB SEARCH
-    # --------------------------------------------------------
-
     start = time.time()
-
     results = collection.query(
         query_embeddings=query_embedding.tolist(),
-        n_results=5,
-        include=[
-            "documents",
-            "metadatas",
-            "distances"
-        ]
+        n_results=TOP_K,
+        include=["documents", "metadatas", "distances"]
     )
-
     chroma_time = time.time() - start
 
-    st.write(
-        f"ChromaDB search time: {chroma_time:.2f} seconds"
-    )
-
+    documents = results["documents"][0]
+    metadatas = results["metadatas"][0]
+    distances = results["distances"][0]
 
     # --------------------------------------------------------
-    # DISPLAY RETRIEVED DOCUMENTS
+    # OUT-OF-SCOPE CHECK (skips the slow LLM call)
     # --------------------------------------------------------
 
-    st.subheader("📚 Retrieved Knowledge")
+    generation_time = 0.0
+    answer = None
 
-    for i, document in enumerate(
-        results["documents"][0]
-    ):
-
-        distance = results["distances"][0][i]
-
-        metadata = results["metadatas"][0][i]
-
-        st.write(
-            f"**Result {i+1} | Distance: {distance:.3f}**"
+    if not documents or min(distances) > MAX_DISTANCE:
+        answer = (
+            "I could not find this information in the provided knowledge base. "
+            "Try asking about a specific ML or deep learning topic, such as "
+            "overfitting, the bias-variance tradeoff, or gradient descent."
         )
 
-        st.write(
-            f"Source: {metadata.get('source', 'Unknown')}"
-        )
+    else:
+        # ----------------------------------------------------
+        # CREATE CONTEXT + PROMPT
+        # ----------------------------------------------------
 
-        st.write(
-            f"Page: {metadata.get('page', 'Unknown')}"
-        )
+        context = "\n\n".join(documents)
 
-        st.write(document)
-
-
-    # --------------------------------------------------------
-    # CREATE CONTEXT
-    # --------------------------------------------------------
-
-    context = "\n\n".join(
-        results["documents"][0]
-    )
-
-
-    # --------------------------------------------------------
-    # CREATE PROMPT
-    # --------------------------------------------------------
-
-    prompt = f"""
+        prompt = f"""
 You are an AI/ML knowledge assistant.
 
 Answer the user's question using ONLY the information
@@ -201,64 +151,63 @@ User Question:
 Answer:
 """
 
+        messages = [{"role": "user", "content": prompt}]
+
+        text = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True
+        )
+
+        inputs = tokenizer([text], return_tensors="pt").to(llm.device)
+
+        # ----------------------------------------------------
+        # QWEN GENERATION (with spinner)
+        # ----------------------------------------------------
+
+        with st.spinner("Generating answer..."):
+            start = time.time()
+            outputs = llm.generate(
+                **inputs,
+                max_new_tokens=MAX_NEW_TOKENS,
+                do_sample=False
+            )
+            generation_time = time.time() - start
+
+        response = outputs[0][inputs.input_ids.shape[1]:]
+        answer = tokenizer.decode(response, skip_special_tokens=True)
 
     # --------------------------------------------------------
-    # QWEN GENERATION
-    # --------------------------------------------------------
-
-    messages = [
-        {
-            "role": "user",
-            "content": prompt
-        }
-    ]
-
-
-    text = tokenizer.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=True
-    )
-
-
-    inputs = tokenizer(
-        [text],
-        return_tensors="pt"
-    ).to(llm.device)
-
-
-    start = time.time()
-
-    outputs = llm.generate(
-        **inputs,
-        max_new_tokens=150,
-        do_sample=False
-    )
-
-    generation_time = time.time() - start
-
-
-    response = outputs[
-        0
-    ][
-        inputs.input_ids.shape[1]:
-    ]
-
-
-    answer = tokenizer.decode(
-        response,
-        skip_special_tokens=True
-    )
-
-
-    # --------------------------------------------------------
-    # FINAL ANSWER
+    # 1) ANSWER FIRST
     # --------------------------------------------------------
 
     st.subheader("🤖 AI Answer")
-
     st.write(answer)
 
-    st.write(
-        f"Generation time: {generation_time:.2f} seconds"
-    )
+    # --------------------------------------------------------
+    # 2) SOURCES IN A COLLAPSED SECTION
+    # --------------------------------------------------------
+
+    with st.expander("📚 Sources used"):
+        for i, document in enumerate(documents):
+            source = metadatas[i].get("source", "Unknown")
+            page = metadatas[i].get("page", "Unknown")
+
+            snippet = document.strip()
+            if len(snippet) > SNIPPET_CHARS:
+                snippet = snippet[:SNIPPET_CHARS].rsplit(" ", 1)[0] + "..."
+
+            st.markdown(f"**{i+1}. {source}, page {page}**")
+            st.caption(snippet)
+
+    # --------------------------------------------------------
+    # 3) DEBUG INFO HIDDEN BY DEFAULT
+    # --------------------------------------------------------
+
+    with st.expander("⚙️ Debug info"):
+        st.write(f"Embedding time: {embedding_time:.2f} s")
+        st.write(f"ChromaDB search time: {chroma_time:.2f} s")
+        st.write(f"Generation time: {generation_time:.2f} s")
+        st.write(
+            "Distances: " + ", ".join(f"{d:.3f}" for d in distances)
+        )
