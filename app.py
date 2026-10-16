@@ -178,7 +178,6 @@ if query:
             "documents",
             "metadatas",
             "distance"
-            8af866b5af9e8149345e07955bd8aef3e086912e
     )
     chroma_time = time.time() - start
 
