@@ -14,8 +14,8 @@ from pypdf import PdfReader
 
 TOP_K = 3                  # fewer chunks = shorter prompt = faster generation
 MAX_DISTANCE = 1.1         # if the best match is farther than this, treat as out of scope
-SNIPPET_CHARS = 300        # how much of each retrieved chunk to show in Sources
-MAX_NEW_TOKENS = 150
+SNIPPET_CHARS = 600        # how much of each retrieved chunk to show in Sources
+MAX_NEW_TOKENS = 200
 
 st.set_page_config(page_title="RAG AI Interviewer", page_icon="🤖")
 
@@ -38,14 +38,10 @@ embedding_model = load_embedding_model()
 
 @st.cache_resource
 def load_qwen():
-<<<<<<< HEAD
-    llm_name = "Qwen/Qwen2.5-1.5B-Instruct"
-=======
 
     print("Loading Qwen model...")
 
     llm_name = "Qwen/Qwen2.5-0.5B-Instruct"
->>>>>>> 8af866b5af9e8149345e07955bd8aef3e086912e
 
     tokenizer = AutoTokenizer.from_pretrained(llm_name)
     model = AutoModelForCausalLM.from_pretrained(
@@ -67,76 +63,8 @@ tokenizer, llm = load_qwen()
 # ============================================================
 @st.cache_resource
 def load_chromadb():
-<<<<<<< HEAD
     client = chromadb.PersistentClient(path="chroma_db")
     return client.get_collection(name="ml_knowledge")
-=======
-
-    print("Connecting to ChromaDB...")
-
-    client = chromadb.PersistentClient(path="chroma_db")
-
-    collection = client.get_or_create_collection(name="ml_knowledge")
-
-    # Build the database on first run (Streamlit Cloud starts empty)
-    if collection.count() == 0:
-
-        print("Building ChromaDB from data/raw ...")
-
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        raw_dir = os.path.join(base_dir, "data", "raw")
-
-        documents, metadatas, ids = [], [], []
-        chunk_size, overlap = 800, 100
-
-        def add_chunks(text, source, page):
-            start = 0
-            while start < len(text):
-                chunk = text[start:start + chunk_size].strip()
-                if chunk:
-                    documents.append(chunk)
-                    metadatas.append({"source": source, "page": page})
-                    ids.append(f"{source}_{page}_{len(ids)}")
-                if start + chunk_size >= len(text):
-                    break
-                start += chunk_size - overlap
-
-        for path in sorted(glob.glob(os.path.join(raw_dir, "**", "*"), recursive=True)):
-            name = os.path.basename(path)
-
-            if path.lower().endswith(".pdf"):
-                reader = PdfReader(path)
-                for page_num, page in enumerate(reader.pages, start=1):
-                    text = page.extract_text() or ""
-                    add_chunks(text, name, page_num)
-
-            elif path.lower().endswith((".txt", ".md")):
-                with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                    add_chunks(f.read(), name, 1)
-
-        if not documents:
-            st.error("No documents found in data/raw. Check that your files are in the GitHub repo.")
-            st.stop()
-
-        # Embed and store in batches
-        batch = 500
-        for i in range(0, len(documents), batch):
-            embeddings = embedding_model.encode(
-                documents[i:i + batch], batch_size=32
-            ).tolist()
-            collection.add(
-                documents=documents[i:i + batch],
-                embeddings=embeddings,
-                metadatas=metadatas[i:i + batch],
-                ids=ids[i:i + batch],
-            )
-
-        print(f"Added {len(documents)} chunks")
-
-    return collection
->>>>>>> 8af866b5af9e8149345e07955bd8aef3e086912e
-
-
 collection = load_chromadb()
 
 
@@ -172,12 +100,7 @@ if query:
     results = collection.query(
         query_embeddings=query_embedding.tolist(),
         n_results=TOP_K,
-        include=["documents", "metadatas", "distances"]
-        n_results=3,
-        include=[
-            "documents",
-            "metadatas",
-            "distance"
+        include=["documents", "metadatas", "distances"],
     )
     chroma_time = time.time() - start
 

@@ -24,8 +24,8 @@ def clean_text(text):
 
 # Create text splitter
 text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=300,
-    chunk_overlap=80
+    chunk_size=800,
+    chunk_overlap=120
 )
 
 

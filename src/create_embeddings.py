@@ -10,7 +10,7 @@ pdf_paths = glob.glob(os.path.join(pdf_folder, "*.pdf"))
 
 print("PDFs found:", pdf_paths)
 
-text_splitter = RecursiveCharacterTextSplitter(chunk_size=300, chunk_overlap=80)
+text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=120)
 
 # Created ONCE, outside the loop
 all_chunks = []

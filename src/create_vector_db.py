@@ -20,7 +20,7 @@ def clean_text(text):
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
 
-splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)
+splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=120)
 
 # 3. Build chunks WITH source and page
 chunks = []
