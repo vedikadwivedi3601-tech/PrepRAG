@@ -47,7 +47,7 @@ for pdf_path in pdf_paths:
     for page_number, page in enumerate(reader.pages):
 
         text = page.extract_text()
-
+        
         if text:
 
             text = clean_text(text)

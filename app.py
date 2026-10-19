@@ -12,7 +12,7 @@ from pypdf import PdfReader
 # SETTINGS (tune these)
 # ============================================================
 
-TOP_K = 3                  # fewer chunks = shorter prompt = faster generation
+TOP_K = 5                  # fewer chunks = shorter prompt = faster generation
 MAX_DISTANCE = 1.1         # if the best match is farther than this, treat as out of scope
 SNIPPET_CHARS = 600        # how much of each retrieved chunk to show in Sources
 MAX_NEW_TOKENS = 200
@@ -41,7 +41,7 @@ def load_qwen():
 
     print("Loading Qwen model...")
 
-    llm_name = "Qwen/Qwen2.5-0.5B-Instruct"
+    llm_name = "Qwen/Qwen2.5-1.5B-Instruct"
 
     tokenizer = AutoTokenizer.from_pretrained(llm_name)
     model = AutoModelForCausalLM.from_pretrained(
@@ -198,8 +198,8 @@ Answer:
 
             snippet = document.strip()
             if len(snippet) > SNIPPET_CHARS:
-                snippet = snippet[:SNIPPET_CHARS].rsplit(" ", 1)[0] + "..."
-
+               snippet = snippet[:SNIPPET_CHARS].rsplit(" ", 1)[0] + "..."
+              
             st.markdown(f"**{i+1}. {source}, page {page}**")
             st.caption(snippet)
 
