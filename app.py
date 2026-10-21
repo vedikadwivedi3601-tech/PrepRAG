@@ -1,21 +1,19 @@
-import chromadb
-from sentence_transformers import SentenceTransformer
-from transformers import AutoTokenizer, AutoModelForCausalLM
-import torch
-import streamlit as st
 import time
-import os
-import glob
-from pypdf import PdfReader
+
+import chromadb
+import streamlit as st
+from groq import Groq
+from sentence_transformers import SentenceTransformer
 
 # ============================================================
 # SETTINGS (tune these)
 # ============================================================
 
-TOP_K = 5                  # fewer chunks = shorter prompt = faster generation
+TOP_K = 5                  # fewer chunks = shorter prompt = faster, cheaper answers
 MAX_DISTANCE = 1.1         # if the best match is farther than this, treat as out of scope
 SNIPPET_CHARS = 600        # how much of each retrieved chunk to show in Sources
-MAX_NEW_TOKENS = 200
+MAX_NEW_TOKENS = 300
+MODEL = "llama-3.3-70b-versatile"   # or "llama-3.1-8b-instant" for faster, lighter answers
 
 st.set_page_config(page_title="RAG AI Interviewer", page_icon="🤖")
 
@@ -33,40 +31,28 @@ embedding_model = load_embedding_model()
 
 
 # ============================================================
-# 2. LOAD QWEN ONLY ONCE
+# 2. GROQ CLIENT (key comes from Streamlit secrets, never from code)
 # ============================================================
 
 @st.cache_resource
-def load_qwen():
-
-    print("Loading Qwen model...")
-
-    llm_name = "Qwen/Qwen2.5-1.5B-Instruct"
-
-    tokenizer = AutoTokenizer.from_pretrained(llm_name)
-    model = AutoModelForCausalLM.from_pretrained(
-        llm_name,
-        torch_dtype="auto"
-    )
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = model.to(device)
-
-    return tokenizer, model
+def get_client():
+    return Groq(api_key=st.secrets[GROQ_API_KEY])
 
 
-tokenizer, llm = load_qwen()
+client = get_client()
 
 
 # ============================================================
 # 3. CONNECT TO CHROMADB
 # ============================================================
+
 @st.cache_resource
 def load_chromadb():
-    client = chromadb.PersistentClient(path="chroma_db")
-    return client.get_collection(name="ml_knowledge")
-collection = load_chromadb()
+    chroma_client = chromadb.PersistentClient(path="chroma_db")
+    return chroma_client.get_collection(name="ml_knowledge")
 
+
+collection = load_chromadb()
 
 
 # ============================================================
@@ -86,10 +72,17 @@ query = st.text_input("Ask your AI/ML question:")
 # 5. PROCESS QUESTION
 # ============================================================
 
+SYSTEM_PROMPT = (
+    "You are an AI/ML knowledge assistant. Answer the user's question using ONLY "
+    "the information in the context provided. Do not use outside knowledge. "
+    "If the answer cannot be found in the context, say exactly: "
+    "\"I could not find this information in the provided knowledge base.\""
+)
+
 if query:
 
     # --------------------------------------------------------
-    # EMBEDDING + SEARCH (no output yet, just store timings)
+    # EMBEDDING + SEARCH
     # --------------------------------------------------------
 
     start = time.time()
@@ -108,15 +101,15 @@ if query:
     metadatas = results["metadatas"][0]
     distances = results["distances"][0]
 
-    # --------------------------------------------------------
-    # OUT-OF-SCOPE CHECK (skips the slow LLM call)
-    # --------------------------------------------------------
-
     generation_time = 0.0
-    answer = None
+
+    # --------------------------------------------------------
+    # OUT-OF-SCOPE CHECK (skips the LLM call completely)
+    # --------------------------------------------------------
 
     if not documents or min(distances) > MAX_DISTANCE:
-        answer = (
+        st.subheader("🤖 AI Answer")
+        st.write(
             "I could not find this information in the provided knowledge base. "
             "Try asking about a specific ML or deep learning topic, such as "
             "overfitting, the bias-variance tradeoff, or gradient descent."
@@ -124,71 +117,41 @@ if query:
 
     else:
         # ----------------------------------------------------
-        # CREATE CONTEXT + PROMPT
+        # BUILD PROMPT + STREAM THE ANSWER FROM GROQ
         # ----------------------------------------------------
 
         context = "\n\n".join(documents)
+        user_msg = f"Context:\n{context}\n\nQuestion: {query}"
 
-        prompt = f"""
-You are an AI/ML knowledge assistant.
-
-Answer the user's question using ONLY the information
-provided in the context below.
-
-Do not use outside knowledge.
-
-If the answer cannot be found in the context, say:
-
-"I could not find this information in the provided knowledge base."
-
----------------- CONTEXT ----------------
-
-{context}
-
--------------- END CONTEXT --------------
-
-User Question:
-
-{query}
-
-Answer:
-"""
-
-        messages = [{"role": "user", "content": prompt}]
-
-        text = tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True
-        )
-
-        inputs = tokenizer([text], return_tensors="pt").to(llm.device)
-
-        # ----------------------------------------------------
-        # QWEN GENERATION (with spinner)
-        # ----------------------------------------------------
-
-        with st.spinner("Generating answer..."):
-            start = time.time()
-            outputs = llm.generate(
-                **inputs,
-                max_new_tokens=MAX_NEW_TOKENS,
-                do_sample=False
+        def token_stream():
+            stream = client.chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_msg},
+                ],
+                max_tokens=MAX_NEW_TOKENS,
+                temperature=0,
+                stream=True,
             )
-            generation_time = time.time() - start
+            for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
 
-        response = outputs[0][inputs.input_ids.shape[1]:]
-        answer = tokenizer.decode(response, skip_special_tokens=True)
+        st.subheader("🤖 AI Answer")
+        start = time.time()
+        try:
+            st.write_stream(token_stream())
+        except Exception as e:
+            st.error(
+                "The answer service is busy or unavailable right now "
+                "(you may have hit the free rate limit). Please try again in a minute."
+            )
+            st.caption(f"Details: {e}")
+        generation_time = time.time() - start
 
     # --------------------------------------------------------
-    # 1) ANSWER FIRST
-    # --------------------------------------------------------
-
-    st.subheader("🤖 AI Answer")
-    st.write(answer)
-
-    # --------------------------------------------------------
-    # 2) SOURCES IN A COLLAPSED SECTION
+    # SOURCES IN A COLLAPSED SECTION
     # --------------------------------------------------------
 
     with st.expander("📚 Sources used"):
@@ -198,19 +161,17 @@ Answer:
 
             snippet = document.strip()
             if len(snippet) > SNIPPET_CHARS:
-               snippet = snippet[:SNIPPET_CHARS].rsplit(" ", 1)[0] + "..."
-              
+                snippet = snippet[:SNIPPET_CHARS].rsplit(" ", 1)[0] + "..."
+
             st.markdown(f"**{i+1}. {source}, page {page}**")
             st.caption(snippet)
 
     # --------------------------------------------------------
-    # 3) DEBUG INFO HIDDEN BY DEFAULT
+    # DEBUG INFO HIDDEN BY DEFAULT
     # --------------------------------------------------------
 
     with st.expander("⚙️ Debug info"):
         st.write(f"Embedding time: {embedding_time:.2f} s")
         st.write(f"ChromaDB search time: {chroma_time:.2f} s")
         st.write(f"Generation time: {generation_time:.2f} s")
-        st.write(
-            "Distances: " + ", ".join(f"{d:.3f}" for d in distances)
-        )
+        st.write("Distances: " + ", ".join(f"{d:.3f}" for d in distances))
