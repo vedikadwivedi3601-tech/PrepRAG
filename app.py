@@ -1,8 +1,13 @@
-import time
+import os
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
 
+import time
 import chromadb
 import streamlit as st
 from groq import Groq
+import itertools
 from sentence_transformers import SentenceTransformer
 
 # ============================================================
@@ -12,8 +17,8 @@ from sentence_transformers import SentenceTransformer
 TOP_K = 5                  # fewer chunks = shorter prompt = faster, cheaper answers
 MAX_DISTANCE = 1.1         # if the best match is farther than this, treat as out of scope
 SNIPPET_CHARS = 600        # how much of each retrieved chunk to show in Sources
-MAX_NEW_TOKENS = 300
-MODEL = "llama-3.3-70b-versatile"   # or "llama-3.1-8b-instant" for faster, lighter answers
+MAX_NEW_TOKENS = 1500
+MODEL = "openai/gpt-oss-120b"   # or "openai/gpt-oss-120b" for faster, lighter answers
 
 st.set_page_config(page_title="RAG AI Interviewer", page_icon="🤖")
 
@@ -36,7 +41,7 @@ embedding_model = load_embedding_model()
 
 @st.cache_resource
 def get_client():
-    return Groq(api_key=st.secrets[GROQ_API_KEY])
+    return Groq(api_key=st.secrets["GROQ_API_KEY"])
 
 
 client = get_client()
@@ -73,9 +78,14 @@ query = st.text_input("Ask your AI/ML question:")
 # ============================================================
 
 SYSTEM_PROMPT = (
-    "You are an AI/ML knowledge assistant. Answer the user's question using ONLY "
-    "the information in the context provided. Do not use outside knowledge. "
-    "If the answer cannot be found in the context, say exactly: "
+    "You are an AI/ML knowledge assistant. Use ONLY the information in the "
+    "context provided from the source PDFs. Do not add facts that are not "
+    "supported by the context. "
+    "You may combine and compare information from different parts of the "
+    "context, for example to explain the difference between two concepts. "
+    "If the context covers only one side of a comparison, explain what the "
+    "context says about that side and state clearly which part is missing. "
+    "Only if the context has nothing relevant at all, say exactly: "
     "\"I could not find this information in the provided knowledge base.\""
 )
 
@@ -141,7 +151,10 @@ if query:
         st.subheader("🤖 AI Answer")
         start = time.time()
         try:
-            st.write_stream(token_stream())
+            gen = token_stream()
+            with st.spinner("Generating answer..."):
+                first = next(gen, "")          # waits for the first token
+            st.write_stream(itertools.chain([first], gen))
         except Exception as e:
             st.error(
                 "The answer service is busy or unavailable right now "

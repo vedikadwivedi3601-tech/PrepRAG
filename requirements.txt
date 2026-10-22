@@ -1,9 +1,6 @@
 streamlit
 chromadb==1.5.9
 sentence-transformers
-transformers
 groq
 torch
-accelerate
 pypdf
-torchvision
